@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>사동고 AI 도우미</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Inter 폰트 사용 */
+        :root {
+            font-family: 'Inter', sans-serif;
+        }
+        /* 대화창 고정 높이 및 스크롤 설정 */
+        #chat-container {
+            max-height: 70vh; /* 뷰포트 높이의 70% */
+            overflow-y: auto; /* 내용이 넘칠 때만 스크롤 표시 */
+            scroll-behavior: smooth; /* 부드러운 스크롤 효과 */
+        }
+        /* 스크롤바 디자인 */
+        #chat-container::-webkit-scrollbar {
+            width: 6px;
+        }
+        #chat-container::-webkit-scrollbar-thumb {
+            background-color: #90b8f8;
+            border-radius: 3px;
+        }
+        #chat-container::-webkit-scrollbar-track {
+            background: #f0f0f0;
+        }
+    </style>
+</head>
+<body class="bg-gray-50 flex items-center justify-center min-h-screen p-4">
+
+    <!-- 메인 챗봇 카드 -->
+    <div class="w-full max-w-4xl bg-white rounded-xl shadow-2xl p-6 flex flex-col h-[85vh]">
+        
+        <!-- 헤더 -->
+        <header class="mb-4 pb-3 border-b border-blue-100">
+            <h1 class="text-2xl font-bold text-blue-700">사동고 AI 도우미 봇 🤖</h1>
+            <p class="text-sm text-gray-500">학교 정보, 급식 정보 등 궁금한 것을 물어보세요! (현재 말투: <span id="current-style-display" class="font-bold text-blue-500">일반 존댓말</span>)</p>
+        </header>
+
+        <!-- 대화 기록 영역 -->
+        <div id="chat-container" class="flex-grow space-y-4 pr-2">
+            <!-- 초기 환영 메시지 -->
+            <div class="flex justify-start">
+                <div class="max-w-xs md:max-w-md bg-blue-100 text-gray-800 p-3 rounded-xl rounded-tl-none shadow-md">
+                    <p class="font-semibold text-blue-800 mb-1">AI 도우미</p>
+                    <p>안녕하세요! 저는 사동고 AI 도우미입니다. 학교에 대해 궁금한 점을 물어보세요! 😊</p>
+                </div>
+            </div>
+            <!-- 메시지 기록은 여기에 동적으로 추가됩니다 -->
+        </div>
+
+        <!-- 입력 영역 -->
+        <footer class="mt-6 pt-4 border-t border-gray-200">
+            <div class="flex flex-wrap items-center space-x-2 mb-3">
+                <label for="style-select" class="text-sm font-medium text-gray-700 self-center">말투 선택:</label>
+                <!-- 4가지 말투 옵션 -->
+                <select id="style-select" class="p-2 border border-gray-300 rounded-lg text-sm focus:ring-blue-500 focus:border-blue-500 shadow-sm">
+                    <option value="존댓말" selected>일반</option>
+                    <option value="친구">친구</option>
+                    <option value="선배">선배</option>
+                    <option value="선생님">선생님</option>
+                </select>
+            </div>
+            <div class="flex space-x-3">
+                <input 
+                    type="text" 
+                    id="user-input" 
+                    placeholder="메시지를 입력하세요..." 
+                    class="flex-grow p-3 border border-gray-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:bg-gray-50"
+                    onkeypress="if(event.key === 'Enter') sendMessage()"
+                >
+                <button 
+                    onclick="sendMessage()" 
+                    id="send-button"
+                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-5 rounded-xl transition duration-200 shadow-lg active:scale-95 disabled:bg-gray-400 disabled:shadow-none"
+                >
+                    전송
+                </button>
+            </div>
+        </footer>
+    </div>
+
+    <!-- JavaScript 로직 -->
+    <script>
+        // DOM 요소 정의
+        const chatContainer = document.getElementById('chat-container');
+        const userInput = document.getElementById('user-input');
+        const sendButton = document.getElementById('send-button');
+        const styleSelect = document.getElementById('style-select');
+        const currentStyleDisplay = document.getElementById('current-style-display');
+
+        // 상태 관리 변수
+        const COOLDOWN_SECONDS = 5; // 말투 변경 쿨다운 (5초)
+        let lastStyleChangeTime = 0; // 마지막 변경 시간 (밀리초)
+        let currentStyle = '존댓말'; // 현재 적용 중인 말투 (초기값)
+
+        // 1. API Endpoint 설정: 직접 Gemini API 대신 Flask 서버의 엔드포인트를 호출합니다.
+        // 이제 서버가 모든 API 키 관리와 데이터 주입을 담당합니다.
+        const API_URL = '/api/chat'; 
+        
+        // 2. TONE_MAPPING, SCHOOL_INFO, DATA_STRING 변수는 서버로직으로 이동하여 삭제합니다.
+
+        /**
+         * 대화 기록 영역을 맨 아래로 스크롤합니다.
+         */
+        function scrollToBottom() {
+            chatContainer.scrollTop = chatContainer.scrollHeight;
+        }
+
+        /**
+         * 새로운 메시지를 대화창에 추가합니다.
+         */
+        function appendMessage(sender, text) {
+            const messageWrapper = document.createElement('div');
+            messageWrapper.className = `flex ${sender === 'user' ? 'justify-end' : 'justify-start'}`;
+
+            const messageBubble = document.createElement('div');
+            messageBubble.className = `max-w-xs md:max-w-md p-3 rounded-xl shadow-lg transition-all duration-300 ${
+                sender === 'user' 
+                    ? 'bg-blue-600 text-white rounded-br-none' 
+                    : 'bg-gray-200 text-gray-800 rounded-tl-none'
+            }`;
+
+            if (sender === 'ai') {
+                const senderName = document.createElement('p');
+                senderName.className = 'font-semibold text-blue-700 mb-1';
+                senderName.textContent = 'AI 도우미';
+                messageBubble.appendChild(senderName);
+            }
+
+            const messageText = document.createElement('p');
+            // 텍스트를 HTML 형식으로 변환 (줄바꿈 처리)
+            messageText.innerHTML = text; 
+            messageBubble.appendChild(messageText);
+            
+            messageWrapper.appendChild(messageBubble);
+            chatContainer.appendChild(messageWrapper);
+            
+            scrollToBottom();
+            return messageBubble;
+        }
+
+        /**
+         * 시스템 알림 메시지를 중앙에 추가합니다.
+         */
+        function appendSystemMessage(text, type = 'info') {
+            const messageWrapper = document.createElement('div');
+            messageWrapper.className = `flex justify-center w-full my-2`;
+            
+            let colorClass = 'bg-gray-100 text-gray-600';
+            if (type === 'success') colorClass = 'bg-green-100 text-green-700 font-medium';
+            if (type === 'error') colorClass = 'bg-red-100 text-red-700 font-medium';
+            
+            const messageBubble = document.createElement('div');
+            messageBubble.className = `text-xs py-1 px-3 rounded-full shadow-sm ${colorClass}`;
+            messageBubble.textContent = text;
+            
+            messageWrapper.appendChild(messageBubble);
+            chatContainer.appendChild(messageWrapper);
+            scrollToBottom();
+        }
+
+        /**
+         * 말투 변경 이벤트 핸들러: 쿨다운을 확인하고 스타일을 업데이트합니다.
+         */
+        function handleStyleChange() {
+            const now = Date.now();
+            const newStyle = styleSelect.value;
+            const cooldownEndTime = lastStyleChangeTime + COOLDOWN_SECONDS * 1000;
+
+            // 이미 현재 스타일로 설정되어 있다면 아무것도 하지 않음
+            if (newStyle === currentStyle) return;
+
+            // 쿨다운 체크
+            if (now < cooldownEndTime) {
+                const remaining = Math.ceil((cooldownEndTime - now) / 1000);
+                
+                // 현재 유효한 스타일로 select 박스 되돌리기
+                styleSelect.value = currentStyle;
+
+                appendSystemMessage(`❌ [말투 변경 실패] 잠시만 기다려주세요! 말투는 ${COOLDOWN_SECONDS}초에 한 번만 변경할 수 있습니다. (${remaining}초 남음)`, 'error');
+                return;
+            }
+
+            // 성공: 스타일 및 시간 업데이트
+            const previousStyle = currentStyle;
+            currentStyle = newStyle;
+            lastStyleChangeTime = now;
+            
+            // 확인 메시지 표시 및 헤더 업데이트
+            const newStyleName = styleSelect.options[styleSelect.selectedIndex].text;
+            const prevStyleName = Array.from(styleSelect.options).find(opt => opt.value === previousStyle).text;
+
+            currentStyleDisplay.textContent = newStyleName;
+            appendSystemMessage(`✅ [말투 변경 완료] 챗봇의 말투가 '${prevStyleName}'에서 '${newStyleName}'로 변경되었습니다.`, 'success');
+        }
+
+        // 말투 선택 드롭다운에 이벤트 리스너 연결
+        styleSelect.addEventListener('change', handleStyleChange);
+
+
+        /**
+         * Flask 서버의 /api/chat 엔드포인트를 호출하여 답변을 생성하고, 지수 백오프를 구현합니다.
+         */
+        async function getChatbotResponse(user_query, style, loadingBubble) {
+            // Flask 서버가 필요한 정보를 처리하므로, 여기서는 query와 style만 보냅니다.
+            const payload = {
+                query: user_query,
+                style: style,
+            };
+
+            const maxRetries = 5;
+            let initialDelay = 1000; // 1초
+
+            for (let i = 0; i < maxRetries; i++) {
+                try {
+                    const response = await fetch(API_URL, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(payload)
+                    });
+
+                    if (!response.ok) {
+                        if (response.status === 429 && i < maxRetries - 1) {
+                            throw new Error('429 Rate Limit Exceeded (Retrying)');
+                        }
+                        
+                        // 서버에서 반환하는 오류 메시지를 포함하여 상세 오류 출력
+                        let errorDetails = await response.text();
+                        try {
+                            errorDetails = JSON.parse(errorDetails).error || errorDetails;
+                        } catch(e) {
+                            // Not a JSON error, use raw text
+                        }
+                        throw new Error(`서버 응답 오류 (${response.status}): ${errorDetails}`);
+                    }
+
+                    const result = await response.json();
+                    // Flask 서버는 'response' 키에 최종 텍스트를 담아 보냅니다.
+                    const aiText = result.response; 
+
+                    if (!aiText) {
+                        throw new Error('서버에서 유효한 응답 텍스트를 찾을 수 없습니다.');
+                    }
+
+                    return aiText; // 성공 시 텍스트 반환
+
+                } catch (e) {
+                    console.error(`API 호출 중 오류 발생 (시도 ${i + 1}/${maxRetries}):`, e);
+
+                    if (i < maxRetries - 1) {
+                        const delay = initialDelay * (2 ** i) + Math.random() * 500; // 지수 백오프 + 랜덤 지터
+                        // 로딩 메시지에 재시도 정보를 업데이트
+                        if(loadingBubble.parentElement) { 
+                            loadingBubble.querySelector('p:not(.font-semibold)').innerHTML = `서버 호출 실패. ${Math.ceil(delay/1000)}초 후 재시도...`;
+                        }
+                        await new Promise(resolve => setTimeout(resolve, delay));
+                    } else {
+                        throw new Error(`최대 재시도 횟수 초과: ${e.message}`);
+                    }
+                }
+            }
+        }
+
+
+        /**
+         * 사용자 메시지를 처리하고 챗봇 응답을 받습니다.
+         */
+        async function sendMessage() {
+            const query = userInput.value.trim();
+            // 현재 적용 중인 스타일(currentStyle) 사용
+            const style = currentStyle; 
+            if (query === '') return;
+
+            // 1. 사용자 메시지를 화면에 즉시 추가
+            appendMessage('user', query);
+            userInput.value = ''; // 입력창 비우기
+            
+            // 2. 로딩 메시지 추가 및 버튼/입력 비활성화
+            sendButton.disabled = true;
+            userInput.disabled = true;
+            styleSelect.disabled = true; // 말투 변경도 비활성화
+            const loadingBubble = appendMessage('ai', '서버에 요청 후 답변을 생성 중입니다... 💬');
+            
+            // 로딩 메시지 텍스트 요소 찾기 (업데이트용)
+            const loadingTextElement = loadingBubble.querySelector('p:not(.font-semibold)');
+
+            try {
+                // 3. API 요청 및 응답 받기
+                const aiResponse = await getChatbotResponse(query, style, loadingBubble);
+                
+                // 4. 응답 텍스트를 로딩 버블에 삽입하고 HTML 형식으로 변환 (줄바꿈 처리)
+                const aiResponseText = aiResponse.replace(/\n/g, '<br>');
+                
+                if (loadingTextElement) {
+                    loadingTextElement.innerHTML = aiResponseText;
+                } else {
+                    loadingBubble.innerHTML = '<p class="font-semibold text-blue-700 mb-1">AI 도우미</p>' + `<p>${aiResponseText}</p>`;
+                }
+
+            } catch (error) {
+                console.error('최종 오류 발생:', error);
+                // 오류 메시지를 로딩 버블에 표시
+                const errorText = `오류 발생: ${error.message.replace(/Error: /, '')}`;
+                if (loadingTextElement) {
+                     loadingTextElement.innerHTML = `<span class="text-red-500">${errorText}</span>`;
+                } else {
+                    loadingBubble.innerHTML = '<p class="font-semibold text-red-500 mb-1">AI 도우미</p>' + `<p><span class="text-red-500">${errorText}</span></p>`;
+                }
+            } finally {
+                // 5. 버튼/입력 다시 활성화 및 스크롤
+                sendButton.disabled = false;
+                userInput.disabled = false;
+                styleSelect.disabled = false; // 말투 변경 다시 활성화
+                userInput.focus(); // 입력 필드에 포커스
+                scrollToBottom();
+            }
+        }
+
+        // 초기 스크롤 위치 설정 및 현재 스타일 표시 업데이트
+        window.onload = () => {
+            // 초기 로드 시 선택된 옵션의 이름으로 헤더 업데이트
+            const selectedOptionText = styleSelect.options[styleSelect.selectedIndex].text;
+            currentStyle = styleSelect.value;
+            currentStyleDisplay.textContent = selectedOptionText;
+            scrollToBottom();
+        }
+    </script>
+</body>
+</html>
